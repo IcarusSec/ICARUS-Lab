@@ -1,0 +1,83 @@
+name: "ICARUS Lab"
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install flask PyJWT
+
+      - name: Start lab in background
+        run: |
+          python app/app.py &
+          sleep 3
+
+      - name: Health check
+        run: curl -sf http://localhost:5000/health
+
+      - name: JWT login endpoint
+        run: |
+          TOKEN=$(curl -sf -X POST http://localhost:5000/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"alice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          echo "Token acquired: ${TOKEN:0:20}..."
+
+      - name: Protected endpoint (valid token)
+        run: |
+          TOKEN=$(curl -sf -X POST http://localhost:5000/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"alice"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/protected/profile \
+            -H "Authorization: Bearer $TOKEN")
+          [ "$STATUS" = "200" ] || (echo "Expected 200, got $STATUS" && exit 1)
+
+      - name: Rate limit endpoint (no lockout)
+        run: |
+          for i in $(seq 1 15); do
+            curl -sf -X POST http://localhost:5000/api/login-rate \
+              -H "Content-Type: application/json" \
+              -d '{"username":"x","password":"x"}' > /dev/null
+          done
+          echo "15 requests sent without lockout — no rate limit confirmed"
+
+      - name: Rate limit endpoint (with lockout)
+        run: |
+          for i in $(seq 1 12); do
+            curl -s -X POST http://localhost:5000/api/limited-login \
+              -H "Content-Type: application/json" \
+              -d '{"username":"x"}' > /dev/null
+          done
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5000/api/limited-login \
+            -H "Content-Type: application/json" -d '{"username":"x"}')
+          [ "$STATUS" = "429" ] || (echo "Expected 429, got $STATUS" && exit 1)
+          echo "Rate limit confirmed: 429 after threshold"
+
+      - name: Sensitive headers endpoint
+        run: |
+          HEADERS=$(curl -sI http://localhost:5000/api/headers/bad)
+          echo "$HEADERS" | grep -i "X-Powered-By" || (echo "Missing X-Powered-By header" && exit 1)
+          echo "$HEADERS" | grep -i "X-Debug-Token" || (echo "Missing X-Debug-Token header" && exit 1)
+
+      - name: Passive error — stack trace
+        run: |
+          BODY=$(curl -s http://localhost:5000/api/error/stack)
+          echo "$BODY" | grep -i "Traceback" || (echo "Stack trace not found in body" && exit 1)
+
+      - name: XSS reflection
+        run: |
+          BODY=$(curl -sf -X POST http://localhost:5000/api/search \
+            -H "Content-Type: application/json" \
+            -d '{"query":"<script>alert(1)</script>"}')
+          echo "$BODY" | grep -F "<script>alert(1)</script>" || (echo "XSS payload not reflected" && exit 1)

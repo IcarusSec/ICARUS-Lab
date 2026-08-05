@@ -1,0 +1,41 @@
+name: False Positive / Missed Finding
+description: An endpoint triggers an unexpected ICARUS finding, or a finding is not triggered when it should be
+labels: ["lab:false-positive"]
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: ICARUS Module
+      options:
+        - JWT Checker
+        - ParamValidator
+        - HTTP Verb Tester
+        - Rate Limit Tester
+        - Sensitive Headers
+        - Passive Error
+        - AutoAuth
+    validations:
+      required: true
+  - type: input
+    id: endpoint
+    attributes:
+      label: Endpoint
+      placeholder: "POST /api/items"
+    validations:
+      required: true
+  - type: dropdown
+    id: type
+    attributes:
+      label: Issue Type
+      options:
+        - False Positive (finding triggered but shouldn't be)
+        - False Negative (finding NOT triggered but should be)
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What finding did you see (or not see)? Paste the ICARUS log output if possible.
+    validations:
+      required: true

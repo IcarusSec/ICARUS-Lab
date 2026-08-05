@@ -1,0 +1,31 @@
+name: New Endpoint Request
+description: Request a new vulnerable endpoint for a specific ICARUS module
+labels: ["lab:new-endpoint"]
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: Target ICARUS Module
+      options:
+        - JWT Checker
+        - ParamValidator
+        - HTTP Verb Tester
+        - Rate Limit Tester
+        - Sensitive Headers
+        - Passive Error
+        - AutoAuth
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Endpoint Description
+      description: What vulnerability should this endpoint exhibit? What finding should ICARUS produce?
+    validations:
+      required: true
+  - type: textarea
+    id: request
+    attributes:
+      label: Example Request
+      description: Paste the raw HTTP request the tester would send to Burp
+      render: http
