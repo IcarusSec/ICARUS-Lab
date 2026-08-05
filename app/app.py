@@ -10,7 +10,7 @@ import sqlite3
 import time
 
 import jwt as pyjwt
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, render_template_string
 
 app = Flask(__name__)
 
@@ -43,52 +43,641 @@ init_db()
 # ─────────────────────────────────────────────
 # Root index — module map for testers
 # ─────────────────────────────────────────────
-MODULE_MAP = {
-    "jwt_checker": {
-        "POST /api/auth/login":        "Get a HS256 JWT (weak secret: 'secret')",
-        "POST /api/auth/login-none":   "Get an alg=none JWT",
-        "POST /api/auth/login-nonclaims": "JWT with no exp/iat/aud/iss/jti",
-        "GET  /api/protected/profile": "Protected endpoint — send Bearer token",
-        "GET  /api/protected/admin":   "Admin-only endpoint (role check skipped!)",
-        "GET  /api/protected/kid":     "kid header path-traversal candidate",
-    },
-    "param_validator": {
-        "POST /api/items":             "JSON body — no validation on any field",
-        "POST /api/orders":            "Nested JSON — accepts any type / missing fields",
-        "POST /api/search":            "Reflects 'query' field (XSS reflection target)",
-        "POST /api/sqli":              "Concatenates 'name' into raw SQL (SQLi target)",
-    },
-    "http_verb_tester": {
-        "ALL  /api/resource":          "GET only by design, but accepts PUT/DELETE/TRACE",
-        "ALL  /api/strict":            "Correct Allow header, TRACE reflected",
-    },
-    "rate_limit_tester": {
-        "POST /api/login-rate":        "No rate limiting on login (brute-force target)",
-        "POST /api/otp":               "No rate limiting on OTP (50 requests, always 200)",
-        "POST /api/limited-login":     "Has rate limiting after 10 requests (429)",
-    },
-    "sensitive_headers": {
-        "GET  /api/headers/bad":       "Returns X-Powered-By, Server w/ version, debug headers",
-        "GET  /api/headers/cookie":    "Set-Cookie without Secure/HttpOnly/SameSite",
-        "GET  /api/headers/internal-ip": "X-Backend-Server with internal IP",
-        "GET  /api/headers/missing-security": "All security headers absent",
-        "GET  /api/headers/hsts":      "Correct HSTS present (baseline)",
-    },
-    "passive_error": {
-        "GET  /api/error/stack":       "Returns Python stack trace in body",
-        "GET  /api/error/sql":         "Returns raw SQL error",
-        "GET  /api/error/php":         "Simulates PHP Warning in body",
-        "GET  /api/error/verbose":     "Returns verbose Django-style debug page",
-    },
-    "auto_auth": {
-        "POST /api/auth/refresh":      "Returns new access_token from refresh_token",
-        "GET  /api/me":                "Returns 401 with WWW-Authenticate if no token",
-    },
+UI_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICARUS Lab</title>
+<style>
+  :root {
+    --bg: #12131a;
+    --surface: #1c1e2b;
+    --border: #2a2d3e;
+    --accent: #ff6633;
+    --accent2: #5e9dd9;
+    --text: #d0d4e8;
+    --muted: #6b7094;
+    --green: #4ade80;
+    --yellow: #facc15;
+    --red: #f87171;
+    --radius: 8px;
+    --font: 'Segoe UI', system-ui, sans-serif;
+    --mono: 'Cascadia Code', 'Fira Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  header .logo { font-size: 1.5rem; font-weight: 800; color: var(--accent); letter-spacing: -0.5px; }
+  header .sub  { font-size: 0.85rem; color: var(--muted); }
+  header .badge {
+    margin-left: auto;
+    background: #3a1a0a;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .layout { display: grid; grid-template-columns: 220px 1fr 360px; height: calc(100vh - 61px); }
+
+  /* Sidebar */
+  nav {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 20px 0;
+    overflow-y: auto;
+  }
+  nav .section-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding: 0 16px 8px;
+  }
+  nav a {
+    display: block;
+    padding: 9px 16px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 0.88rem;
+    border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  nav a:hover, nav a.active {
+    background: rgba(255,102,51,0.08);
+    border-left-color: var(--accent);
+    color: #fff;
+  }
+  nav a .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  /* Main */
+  main { overflow-y: auto; padding: 28px 32px; }
+  .module { display: none; }
+  .module.active { display: block; }
+
+  .module-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .module-desc {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 24px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+  }
+  .method {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #1a2a1a;
+    color: var(--green);
+  }
+  .method.POST { background: #1a1f2a; color: var(--accent2); }
+  .method.GET  { background: #1a2a1a; color: var(--green); }
+  .method.ALL  { background: #2a1a2a; color: var(--yellow); }
+  .endpoint-path { font-family: var(--mono); font-size: 0.85rem; color: #fff; }
+  .vuln-tag {
+    margin-left: auto;
+    font-size: 0.7rem;
+    color: var(--accent);
+    background: rgba(255,102,51,0.12);
+    border: 1px solid rgba(255,102,51,0.3);
+    border-radius: 20px;
+    padding: 2px 8px;
+  }
+  .card-body { padding: 14px 16px; }
+  .card-body label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .card-body textarea, .card-body input[type=text] {
+    width: 100%;
+    background: #0d0e14;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    padding: 8px 10px;
+    resize: vertical;
+    outline: none;
+    margin-bottom: 10px;
+  }
+  .card-body textarea:focus, .card-body input:focus { border-color: var(--accent2); }
+  .fire-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 7px 18px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .fire-btn:hover { opacity: 0.85; }
+  .fire-btn:active { opacity: 0.7; }
+
+  /* Response panel */
+  aside {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .aside-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #status-pill {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 700;
+    display: none;
+  }
+  .status-2xx { background: #14301e; color: var(--green); display: inline !important; }
+  .status-4xx { background: #2a1a10; color: var(--yellow); display: inline !important; }
+  .status-5xx { background: #2a1010; color: var(--red); display: inline !important; }
+  #response-meta {
+    padding: 8px 16px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    min-height: 28px;
+  }
+  #response-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 16px;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text);
+  }
+  .response-headers {
+    padding: 8px 16px;
+    font-size: 0.72rem;
+    font-family: var(--mono);
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    white-space: pre;
+    overflow-x: auto;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⚡ ICARUS</div>
+  <div class="sub">Deliberately Vulnerable Lab</div>
+  <div class="badge">⚠ TESTING ONLY</div>
+</header>
+
+<div class="layout">
+  <nav>
+    <div class="section-label">Modules</div>
+    <a href="#" class="active" onclick="show('jwt')">
+      <span class="dot" style="background:#F78C6C"></span>JWT Checker
+    </a>
+    <a href="#" onclick="show('param')">
+      <span class="dot" style="background:#82AAFF"></span>ParamValidator
+    </a>
+    <a href="#" onclick="show('verb')">
+      <span class="dot" style="background:#FFCB6B"></span>HTTP Verb Tester
+    </a>
+    <a href="#" onclick="show('rate')">
+      <span class="dot" style="background:#C3E88D"></span>Rate Limit
+    </a>
+    <a href="#" onclick="show('headers')">
+      <span class="dot" style="background:#FF5370"></span>Sensitive Headers
+    </a>
+    <a href="#" onclick="show('error')">
+      <span class="dot" style="background:#89DDFF"></span>Passive Error
+    </a>
+    <a href="#" onclick="show('auth')">
+      <span class="dot" style="background:#C792EA"></span>AutoAuth
+    </a>
+  </nav>
+
+  <main>
+
+    <!-- JWT Checker -->
+    <div class="module active" id="mod-jwt">
+      <div class="module-title">JWT Checker</div>
+      <div class="module-desc">Targets: weak HS256 secret, alg=none, missing claims, privilege escalation, kid path traversal</div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/auth/login</span>
+          <span class="vuln-tag">WEAK_MAC · MISSING_CLAIMS</span>
+        </div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="jwt-login-body" rows="3">{"username": "alice", "password": "alice123"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/auth/login','jwt-login-body')">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/auth/login-none</span>
+          <span class="vuln-tag">ALG_NONE · CRITICAL</span>
+        </div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="jwt-none-body" rows="2">{"username": "alice"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/auth/login-none','jwt-none-body')">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/auth/login-nonclaims</span>
+          <span class="vuln-tag">MISSING_EXP · MISSING_IAT · ...</span>
+        </div>
+        <div class="card-body">
+          <button class="fire-btn" onclick="fire('POST','/api/auth/login-nonclaims',null)">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method GET">GET</span>
+          <span class="endpoint-path">/api/protected/admin</span>
+          <span class="vuln-tag">PRIV ESC — role check on unverified payload</span>
+        </div>
+        <div class="card-body">
+          <label>Authorization Header</label>
+          <input type="text" id="jwt-admin-token" placeholder="Bearer eyJ...">
+          <button class="fire-btn" onclick="fireWithAuth('GET','/api/protected/admin','jwt-admin-token')">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method GET">GET</span>
+          <span class="endpoint-path">/api/protected/profile</span>
+          <span class="vuln-tag">Protected endpoint</span>
+        </div>
+        <div class="card-body">
+          <label>Authorization Header</label>
+          <input type="text" id="jwt-profile-token" placeholder="Bearer eyJ...">
+          <button class="fire-btn" onclick="fireWithAuth('GET','/api/protected/profile','jwt-profile-token')">Send →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ParamValidator -->
+    <div class="module" id="mod-param">
+      <div class="module-title">ParamValidator</div>
+      <div class="module-desc">Targets: no type/structural/boundary validation, XSS reflection, raw SQLi string concatenation</div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/items</span>
+          <span class="vuln-tag">No validation — structural · type · boundary</span>
+        </div>
+        <div class="card-body">
+          <label>Body (mutate me)</label>
+          <textarea id="param-items-body" rows="6">{"name": "widget", "price": 9.99, "quantity": 10, "active": true}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/items','param-items-body')">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/search</span>
+          <span class="vuln-tag">XSS Reflection</span>
+        </div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="param-search-body" rows="2">{"query": "<script>alert(1)</script>"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/search','param-search-body')">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/sqli</span>
+          <span class="vuln-tag">Raw SQL concatenation</span>
+        </div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="param-sqli-body" rows="2">{"name": "alice"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/sqli','param-sqli-body')">Send →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HTTP Verb Tester -->
+    <div class="module" id="mod-verb">
+      <div class="module-title">HTTP Verb Tester</div>
+      <div class="module-desc">Targets: accepts all verbs, TRACE reflection, Allow header mismatch</div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method ALL">*</span>
+          <span class="endpoint-path">/api/resource</span>
+          <span class="vuln-tag">Accepts all verbs · TRACE reflects</span>
+        </div>
+        <div class="card-body">
+          <label>Method</label>
+          <select id="verb-method" style="background:#0d0e14;border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:5px;margin-bottom:10px;width:100%">
+            <option>GET</option><option>POST</option><option>PUT</option>
+            <option>DELETE</option><option>PATCH</option><option>OPTIONS</option><option>TRACE</option>
+          </select>
+          <button class="fire-btn" onclick="fireVerb('/api/resource','verb-method')">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method GET">GET</span>
+          <span class="endpoint-path">/api/strict</span>
+          <span class="vuln-tag">Correctly restricted — baseline</span>
+        </div>
+        <div class="card-body">
+          <button class="fire-btn" onclick="fire('GET','/api/strict',null)">Send →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rate Limit -->
+    <div class="module" id="mod-rate">
+      <div class="module-title">Rate Limit Tester</div>
+      <div class="module-desc">Targets: no lockout on login/OTP (brute-force surface), control endpoint with proper 429</div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/login-rate</span>
+          <span class="vuln-tag">No rate limiting</span>
+        </div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="rate-login-body" rows="2">{"username": "admin", "password": "wrong"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/login-rate','rate-login-body')">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/otp</span>
+          <span class="vuln-tag">No lockout — fixed OTP is 123456</span>
+        </div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="rate-otp-body" rows="2">{"otp": "000000"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/otp','rate-otp-body')">Send →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="method POST">POST</span>
+          <span class="endpoint-path">/api/limited-login</span>
+          <span class="vuln-tag">429 after 10 requests — control</span>
+        </div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="rate-limited-body" rows="2">{"username": "test"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/limited-login','rate-limited-body')">Send →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sensitive Headers -->
+    <div class="module" id="mod-headers">
+      <div class="module-title">Sensitive Headers</div>
+      <div class="module-desc">Targets: version disclosure, debug headers, missing security headers, cookie flags, internal IP leak</div>
+
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/headers/bad</span><span class="vuln-tag">X-Powered-By · Debug headers · Server version</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/headers/bad',null)">Send →</button></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/headers/cookie</span><span class="vuln-tag">Missing Secure · HttpOnly · SameSite</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/headers/cookie',null)">Send →</button></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/headers/internal-ip</span><span class="vuln-tag">Internal IP 10.0.0.42 in header</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/headers/internal-ip',null)">Send →</button></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/headers/missing-security</span><span class="vuln-tag">All security headers absent</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/headers/missing-security',null)">Send →</button></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/headers/hsts</span><span class="vuln-tag">Correct headers — baseline</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/headers/hsts',null)">Send →</button></div>
+      </div>
+    </div>
+
+    <!-- Passive Error -->
+    <div class="module" id="mod-error">
+      <div class="module-title">Passive Error</div>
+      <div class="module-desc">Targets: Python stack traces, SQL errors, PHP warnings, Django verbose debug pages in response body</div>
+
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/error/stack</span><span class="vuln-tag">Python Traceback</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/error/stack',null)">Send →</button></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/error/sql</span><span class="vuln-tag">Raw SQL error</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/error/sql',null)">Send →</button></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/error/php</span><span class="vuln-tag">PHP Warning</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/error/php',null)">Send →</button></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/error/verbose</span><span class="vuln-tag">Django debug page</span></div>
+        <div class="card-body"><button class="fire-btn" onclick="fire('GET','/api/error/verbose',null)">Send →</button></div>
+      </div>
+    </div>
+
+    <!-- AutoAuth -->
+    <div class="module" id="mod-auth">
+      <div class="module-title">AutoAuth</div>
+      <div class="module-desc">Targets: token issuance for AutoAuth config, refresh flow, 401 trigger for re-injection</div>
+
+      <div class="card">
+        <div class="card-header"><span class="method POST">POST</span><span class="endpoint-path">/api/auth/login</span><span class="vuln-tag">Configure as AutoAuth token endpoint</span></div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="auth-login-body" rows="2">{"username": "alice", "password": "alice123"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/auth/login','auth-login-body')">Send →</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method POST">POST</span><span class="endpoint-path">/api/auth/refresh</span><span class="vuln-tag">Refresh token flow</span></div>
+        <div class="card-body">
+          <label>Body</label>
+          <textarea id="auth-refresh-body" rows="2">{"refresh_token": "dummy-token"}</textarea>
+          <button class="fire-btn" onclick="fire('POST','/api/auth/refresh','auth-refresh-body')">Send →</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="method GET">GET</span><span class="endpoint-path">/api/me</span><span class="vuln-tag">401 without token — AutoAuth re-inject target</span></div>
+        <div class="card-body">
+          <label>Authorization (leave blank to trigger 401)</label>
+          <input type="text" id="auth-me-token" placeholder="Bearer eyJ... (optional)">
+          <button class="fire-btn" onclick="fireWithAuth('GET','/api/me','auth-me-token')">Send →</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <aside>
+    <div class="aside-header">
+      RESPONSE
+      <span id="status-pill"></span>
+    </div>
+    <div id="response-meta"></div>
+    <div class="response-headers" id="response-headers"></div>
+    <div id="response-body">Hit Send on any request to see the response here.</div>
+  </aside>
+</div>
+
+<script>
+const modules = {jwt:'mod-jwt',param:'mod-param',verb:'mod-verb',rate:'mod-rate',headers:'mod-headers',error:'mod-error',auth:'mod-auth'};
+
+function show(key) {
+  document.querySelectorAll('.module').forEach(m => m.classList.remove('active'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+  document.getElementById(modules[key]).classList.add('active');
+  event.currentTarget.classList.add('active');
+  return false;
 }
+
+async function fire(method, path, bodyId) {
+  const body = bodyId ? document.getElementById(bodyId).value : null;
+  const headers = {'Content-Type': 'application/json'};
+  await doFetch(method, path, headers, body);
+}
+
+async function fireWithAuth(method, path, tokenId) {
+  const token = document.getElementById(tokenId).value.trim();
+  const headers = {'Content-Type': 'application/json'};
+  if (token) headers['Authorization'] = token.startsWith('Bearer') ? token : 'Bearer ' + token;
+  await doFetch(method, path, headers, null);
+}
+
+async function fireVerb(path, selectId) {
+  const method = document.getElementById(selectId).value;
+  await doFetch(method, path, {}, null);
+}
+
+async function doFetch(method, path, headers, body) {
+  const pill = document.getElementById('status-pill');
+  const meta = document.getElementById('response-meta');
+  const hdrs = document.getElementById('response-headers');
+  const out  = document.getElementById('response-body');
+
+  pill.className = ''; pill.textContent = ''; pill.style.display = 'none';
+  meta.textContent = 'Sending...';
+  hdrs.textContent = '';
+  out.textContent  = '';
+
+  const t0 = Date.now();
+  try {
+    const opts = {method, headers};
+    if (body && method !== 'GET' && method !== 'HEAD') opts.body = body;
+    const res = await fetch(path, opts);
+    const ms  = Date.now() - t0;
+    const text = await res.text();
+
+    pill.textContent = res.status;
+    pill.style.display = 'inline';
+    if (res.status < 300)      pill.className = 'status-2xx';
+    else if (res.status < 500) pill.className = 'status-4xx';
+    else                       pill.className = 'status-5xx';
+
+    meta.textContent = method + ' ' + path + '  —  ' + ms + 'ms  |  ' + text.length + ' bytes';
+
+    let hdrLines = '';
+    res.headers.forEach((v,k) => { hdrLines += k + ': ' + v + '\n'; });
+    hdrs.textContent = hdrLines;
+
+    try { out.textContent = JSON.stringify(JSON.parse(text), null, 2); }
+    catch { out.textContent = text; }
+  } catch(e) {
+    meta.textContent = 'Request failed: ' + e.message;
+    out.textContent  = String(e);
+  }
+}
+</script>
+</body>
+</html>
+"""
 
 @app.route("/")
 def index():
-    return jsonify({"icarus_lab": True, "modules": MODULE_MAP})
+    return render_template_string(UI_HTML)
 
 
 # ═══════════════════════════════════════════════
