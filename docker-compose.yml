@@ -1,0 +1,9 @@
+services:
+  lab:
+    build: ./app
+    container_name: icarus-lab
+    ports:
+      - "8888:5000"   # Burp target: http://localhost:8888
+    restart: unless-stopped
+    environment:
+      FLASK_ENV: development
