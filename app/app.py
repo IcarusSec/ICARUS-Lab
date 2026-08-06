@@ -660,7 +660,7 @@ async function doFetch(method, path, headers, body) {
     meta.textContent = method + ' ' + path + '  —  ' + ms + 'ms  |  ' + text.length + ' bytes';
 
     let hdrLines = '';
-    res.headers.forEach((v,k) => { hdrLines += k + ': ' + v + '\n'; });
+    res.headers.forEach((v,k) => { hdrLines += k + ': ' + v + '\\n'; });
     hdrs.textContent = hdrLines;
 
     try { out.textContent = JSON.stringify(JSON.parse(text), null, 2); }
