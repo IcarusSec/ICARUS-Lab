@@ -664,7 +664,7 @@ async function doFetch(method, path, headers, body) {
     hdrs.textContent = hdrLines;
 
     try { out.textContent = JSON.stringify(JSON.parse(text), null, 2); }
-    catch { out.textContent = text; }
+    catch (e) { out.textContent = text; }
   } catch(e) {
     meta.textContent = 'Request failed: ' + e.message;
     out.textContent  = String(e);
@@ -675,9 +675,15 @@ async function doFetch(method, path, headers, body) {
 </html>
 """
 
+from flask import make_response
+
 @app.route("/")
 def index():
-    return render_template_string(UI_HTML)
+    resp = make_response(render_template_string(UI_HTML))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 # ═══════════════════════════════════════════════
