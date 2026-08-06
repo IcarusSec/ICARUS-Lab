@@ -292,25 +292,25 @@ UI_HTML = """
 <div class="layout">
   <nav>
     <div class="section-label">Modules</div>
-    <a href="#" class="active" onclick="show('jwt')">
+    <a href="#" class="active" onclick="show(event, 'jwt')">
       <span class="dot" style="background:#F78C6C"></span>JWT Checker
     </a>
-    <a href="#" onclick="show('param')">
+    <a href="#" onclick="show(event, 'param')">
       <span class="dot" style="background:#82AAFF"></span>ParamValidator
     </a>
-    <a href="#" onclick="show('verb')">
+    <a href="#" onclick="show(event, 'verb')">
       <span class="dot" style="background:#FFCB6B"></span>HTTP Verb Tester
     </a>
-    <a href="#" onclick="show('rate')">
+    <a href="#" onclick="show(event, 'rate')">
       <span class="dot" style="background:#C3E88D"></span>Rate Limit
     </a>
-    <a href="#" onclick="show('headers')">
+    <a href="#" onclick="show(event, 'headers')">
       <span class="dot" style="background:#FF5370"></span>Sensitive Headers
     </a>
-    <a href="#" onclick="show('error')">
+    <a href="#" onclick="show(event, 'error')">
       <span class="dot" style="background:#89DDFF"></span>Passive Error
     </a>
-    <a href="#" onclick="show('auth')">
+    <a href="#" onclick="show(event, 'auth')">
       <span class="dot" style="background:#C792EA"></span>AutoAuth
     </a>
   </nav>
@@ -606,11 +606,11 @@ UI_HTML = """
 <script>
 const modules = {jwt:'mod-jwt',param:'mod-param',verb:'mod-verb',rate:'mod-rate',headers:'mod-headers',error:'mod-error',auth:'mod-auth'};
 
-function show(key) {
+function show(e, key) {
   document.querySelectorAll('.module').forEach(m => m.classList.remove('active'));
   document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
   document.getElementById(modules[key]).classList.add('active');
-  event.currentTarget.classList.add('active');
+  if (e && e.currentTarget) e.currentTarget.classList.add('active');
   return false;
 }
 
